@@ -1,0 +1,25 @@
+{
+  "name": "ai-product-engineering-starter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Starter kit for the AI Product Engineering summer school (Node + Express + Gemini).",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "extract-image": "node scripts/extract-image.js",
+    "extract-folder": "node scripts/extract-folder.js",
+    "build-embeddings": "node scripts/build-embeddings.js",
+    "agent-task": "node scripts/run-agent-task.js",
+    "eval": "node scripts/run-eval.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "dotenv": "^16.4.5",
+    "express": "^5.1.0"
+  }
+}

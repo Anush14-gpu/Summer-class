@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Platewise — AI calorie calculator</title>
+  <style>
+    :root { font-family: Inter, system-ui, sans-serif; color: #183028; background: #f5f8f2; }
+    body { max-width: 58rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
+    .logo { color: #1f7a55; font-weight: 800; font-size: 1.3rem; letter-spacing: -.04em; }
+    .status { color: #61736b; font-size: .8rem; }
+    .status.ready { color: #1f7a55; font-weight: 700; }
+    .eyebrow { color: #e8793f; font-size: .75rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { max-width: 35rem; font-size: clamp(2.2rem, 6vw, 4rem); line-height: .98; letter-spacing: -.06em; margin: .5rem 0 1rem; }
+    .intro { max-width: 37rem; color: #61736b; line-height: 1.6; }
+    form, #result { background: #fff; border: 1px solid #dce8df; border-radius: 1.25rem; padding: 1.25rem; box-shadow: 0 12px 35px #1c553b0d; }
+    form { display: grid; gap: 1rem; margin-top: 2rem; }
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+    label { display: grid; gap: .4rem; font-weight: 700; font-size: .9rem; }
+    input { width: 100%; box-sizing: border-box; border: 1px solid #cbd9cf; border-radius: .65rem; padding: .75rem; font: inherit; background: #fbfdfb; }
+    input:focus { outline: 3px solid #bde6cd; border-color: #2a9866; }
+    .upload { border: 1.5px dashed #8fc8a6; border-radius: .8rem; padding: 1.2rem; background: #f7fcf8; }
+    .hint { color: #718079; font-size: .85rem; font-weight: 400; line-height: 1.45; }
+    button { border: 0; border-radius: .7rem; padding: .85rem 1.2rem; background: #1f7a55; color: #fff; font: inherit; font-weight: 800; cursor: pointer; }
+    button:disabled { cursor: wait; opacity: .65; }
+    #preview { display: none; max-height: 16rem; max-width: 100%; border-radius: .6rem; margin-top: .8rem; }
+    video { display: none; width: 100%; max-height: 18rem; object-fit: cover; border-radius: .6rem; margin-top: .8rem; background: #183028; }
+    .camera-actions { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: .7rem; }
+    .secondary { background: #e8f3eb; color: #1f7a55; }
+    #result { margin-top: 1.25rem; min-height: 4rem; }
+    .state-empty { color: #718079; }
+    .state-error { color: #b42318; background: #fff8f7 !important; border-color: #f2c7c2 !important; }
+    .calories { color: #1f7a55; font-size: 2.4rem; font-weight: 850; letter-spacing: -.06em; }
+    .meta { color: #61736b; margin: .2rem 0 1rem; }
+    .note { border-left: 3px solid #f0a16e; padding-left: .7rem; color: #61736b; font-size: .9rem; }
+    .trained { color: #1f7a55; font-size: .85rem; font-weight: 700; }
+    @media (max-width: 35rem) { .grid { grid-template-columns: 1fr; } header { margin-bottom: 1rem; } }
+  </style>
+</head>
+<body>
+  <header><span class="logo">platewise</span><span id="status" class="status">Checking AI service…</span></header>
+  <main>
+    <p class="eyebrow">Understand your plate</p>
+    <h1>Know what’s on your plate.</h1>
+    <p class="intro">Take a photo and place a familiar object beside your food. Platewise uses its known size to estimate the portion and calories.</p>
+    <form id="training-form">
+      <p class="eyebrow">Step 1 · Train your reference object</p>
+      <p class="hint">Show Platewise the object, name it, and enter its measurements. Gemini verifies the reference photo and compares it with the object in your food photo. Photos are sent to Gemini for analysis; the saved reference photo stays in this browser. Avoid sensitive images.</p>
+      <label class="upload" for="reference-photo">Reference object photo
+        <input id="reference-photo" type="file" accept="image/jpeg,image/png,image/webp,image/heic" />
+        <div class="camera-actions"><button id="reference-camera" class="secondary" type="button">Open camera</button><button id="reference-capture" type="button" hidden>Take reference photo</button></div>
+        <video id="reference-video" autoplay playsinline></video>
+      </label>
+      <label for="reference-name">Object name<input id="reference-name" placeholder="e.g. credit card, fork, coin" required /></label>
+      <div class="grid">
+        <label for="reference-length">Length (cm)<input id="reference-length" type="number" min="0.1" step="0.1" placeholder="8.5" required /></label>
+        <label for="reference-width">Width (cm)<input id="reference-width" type="number" min="0.1" step="0.1" placeholder="5.5" required /></label>
+      </div>
+      <button id="train" type="submit">Save reference object</button>
+      <span id="trained" class="trained" aria-live="polite"></span>
+      <button id="forget-reference" class="secondary" type="button" hidden>Forget saved reference</button>
+    </form>
+    <form id="food-form">
+      <p class="eyebrow">Step 2 · Scan your food</p>
+      <label class="upload" for="photo">Open camera or choose a food photo
+        <span class="hint">Place your trained object beside the food so AI can identify it and use it as the scale.</span>
+        <input id="photo" type="file" accept="image/jpeg,image/png,image/webp,image/heic" />
+        <div class="camera-actions"><button id="food-camera" class="secondary" type="button">Open camera</button><button id="food-capture" type="button" hidden>Take food photo</button></div>
+        <video id="food-video" autoplay playsinline></video>
+        <img id="preview" alt="Selected food preview" />
+      </label>
+      <label for="brand">Brand (optional)<span class="hint">Helpful for packaged food, otherwise leave blank.</span><input id="brand" maxlength="100" placeholder="e.g. Greek yogurt" /></label>
+      <button id="submit" type="submit">Estimate calories</button>
+    </form>
+    <section id="result" class="state-empty" aria-live="polite">Your calorie estimate will appear here.</section>
+  </main>
+  <script>
+    const form = document.getElementById('food-form');
+    const trainingForm = document.getElementById('training-form');
+    const photo = document.getElementById('photo');
+    const preview = document.getElementById('preview');
+    const result = document.getElementById('result');
+    const submit = document.getElementById('submit');
+    const train = document.getElementById('train');
+    const trained = document.getElementById('trained');
+    const forgetReference = document.getElementById('forget-reference');
+    const referenceName = document.getElementById('reference-name');
+    const referenceLength = document.getElementById('reference-length');
+    const referenceWidth = document.getElementById('reference-width');
+    const referencePhoto = document.getElementById('reference-photo');
+    const referenceCamera = document.getElementById('reference-camera');
+    const referenceCapture = document.getElementById('reference-capture');
+    const referenceVideo = document.getElementById('reference-video');
+    const foodCamera = document.getElementById('food-camera');
+    const foodCapture = document.getElementById('food-capture');
+    const foodVideo = document.getElementById('food-video');
+    let referenceStream;
+    let foodStream;
+    const readImage = (file) => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ data: String(reader.result).split(',')[1], mimeType: file.type });
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const openCamera = async (video, capture, currentStream) => {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Camera access is not supported here. Choose a photo file instead.');
+      }
+      if (currentStream) currentStream.getTracks().forEach((track) => track.stop());
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+      video.srcObject = stream;
+      video.style.display = 'block';
+      capture.hidden = false;
+      return stream;
+    };
+    const captureCameraImage = (video, stream, input) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      stream.getTracks().forEach((track) => track.stop());
+      video.srcObject = null;
+      video.style.display = 'none';
+      input._cameraImage = { data: canvas.toDataURL('image/jpeg', .9).split(',')[1], mimeType: 'image/jpeg' };
+    };
+    referenceCamera.addEventListener('click', async () => {
+      try { referenceStream = await openCamera(referenceVideo, referenceCapture, referenceStream); } catch (error) { trained.textContent = error.message; }
+    });
+    referenceCapture.addEventListener('click', () => captureCameraImage(referenceVideo, referenceStream, referencePhoto));
+    foodCamera.addEventListener('click', async () => {
+      try { foodStream = await openCamera(foodVideo, foodCapture, foodStream); } catch (error) { result.className = 'state-error'; result.textContent = error.message; }
+    });
+    foodCapture.addEventListener('click', () => captureCameraImage(foodVideo, foodStream, photo));
+    let savedReference = JSON.parse(localStorage.getItem('platewise-reference') || 'null');
+    if (savedReference) {
+      referenceName.value = savedReference.name;
+      referenceLength.value = savedReference.lengthCm;
+      referenceWidth.value = savedReference.widthCm;
+      trained.textContent = `Trained object: ${savedReference.name} (${savedReference.lengthCm} × ${savedReference.widthCm} cm)`;
+      forgetReference.hidden = false;
+    }
+    forgetReference.addEventListener('click', () => {
+      localStorage.removeItem('platewise-reference');
+      savedReference = null;
+      trained.textContent = 'Saved reference photo and profile removed from this browser.';
+      forgetReference.hidden = true;
+    });
+    const status = document.getElementById('status');
+    fetch('/health').then((response) => response.json()).then((data) => {
+      status.textContent = data.aiConfigured
+        ? `Gemini AI ready · ${data.generationModel}`
+        : 'Gemini API key required';
+      status.className = data.aiConfigured ? 'status ready' : 'status';
+    }).catch(() => { status.textContent = 'AI status unavailable'; });
+    photo.addEventListener('change', () => {
+      photo._cameraImage = null;
+      const file = photo.files[0];
+      if (file) { preview.src = URL.createObjectURL(file); preview.style.display = 'block'; }
+    });
+    referencePhoto.addEventListener('change', () => {
+      referencePhoto._cameraImage = null;
+    });
+    trainingForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      train.disabled = true;
+      try {
+        const photoData = referencePhoto._cameraImage || (referencePhoto.files[0] ? await readImage(referencePhoto.files[0]) : savedReference?.image && { data: savedReference.image, mimeType: savedReference.mimeType });
+        if (!photoData) throw new Error('Take a reference-object photo before saving.');
+        const res = await fetch('/train-reference', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: referenceName.value,
+            lengthCm: referenceLength.value,
+            widthCm: referenceWidth.value,
+            image: photoData.data,
+            mimeType: photoData.mimeType,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not save reference object.');
+        data.profile.image = photoData.data;
+        data.profile.mimeType = photoData.mimeType;
+        localStorage.setItem('platewise-reference', JSON.stringify(data.profile));
+        savedReference = data.profile;
+        trained.textContent = `Trained object: ${data.profile.name} (${data.profile.lengthCm} × ${data.profile.widthCm} cm)`;
+        forgetReference.hidden = false;
+      } catch (error) {
+        trained.textContent = error.message;
+      } finally {
+        train.disabled = false;
+      }
+    });
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const file = photo.files[0];
+      const cameraImage = photo._cameraImage;
+      if (!file && !cameraImage) return;
+      const reference = JSON.parse(localStorage.getItem('platewise-reference') || 'null');
+      if (!reference) {
+        result.className = 'state-error';
+        result.textContent = 'Train a reference object before scanning food.';
+        return;
+      }
+      submit.disabled = true;
+      result.className = '';
+      result.textContent = 'Analyzing your plate…';
+      try {
+        const imageData = cameraImage || await readImage(file);
+        const res = await fetch('/analyze-food', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: imageData.data, mimeType: imageData.mimeType, referenceImage: reference.image, referenceMimeType: reference.mimeType, referenceName: reference.name, reference: { lengthCm: reference.lengthCm, widthCm: reference.widthCm }, brand: document.getElementById('brand').value.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          result.className = 'state-error';
+          result.textContent = data.error || 'Request failed';
+          return;
+        }
+        const item = data.analysis;
+        result.replaceChildren();
+        const calories = document.createElement('div');
+        calories.className = 'calories';
+        calories.textContent = `${Number(item.calories).toLocaleString()} kcal`;
+        const food = document.createElement('strong');
+        food.textContent = item.food;
+        const meta = document.createElement('p');
+        meta.className = 'meta';
+        meta.textContent = `${item.portion} · ${item.confidence} confidence · Gemini vision estimate`;
+        if (item.referenceDetected === false) {
+          result.className = 'state-error';
+          result.textContent = `I could not find the trained ${reference.name} in this photo. Place it beside the food and try again.`;
+          return;
+        }
+        const note = document.createElement('p');
+        note.className = 'note';
+        note.textContent = item.notes;
+        result.append(calories, food, meta, note);
+      } catch (error) {
+        result.className = 'state-error';
+        result.textContent = error.message || 'Could not analyze the photo.';
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
