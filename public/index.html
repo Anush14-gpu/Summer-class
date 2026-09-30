@@ -43,14 +43,14 @@
   <main>
     <p class="eyebrow">Understand your plate</p>
     <h1>Know what’s on your plate.</h1>
-    <p class="intro">Take a photo and place a familiar object beside your food. Platewise uses its known size to estimate the portion and calories.</p>
+    <p class="intro">Take a photo of your food for an AI portion and calorie estimate. Optionally include a familiar object with known measurements to help estimate the meal’s proportions.</p>
     <form id="training-form">
-      <p class="eyebrow">Step 1 · Train your reference object</p>
-      <p class="hint">Show Platewise the object, name it, and enter its measurements. Gemini verifies the reference photo and compares it with the object in your food photo. Photos are sent to Gemini for analysis; the saved reference photo stays in this browser. Avoid sensitive images.</p>
-      <label class="upload" for="reference-photo">Reference object photo
+      <p class="eyebrow">Optional · Add a size reference</p>
+      <p class="hint">A reference object can help Gemini judge the meal’s proportions, but you can estimate calories without one. Save an object photo and its measurements here if you want to reuse it. Uploaded photos are sent to Gemini; a saved reference photo stays in this browser.</p>
+      <label class="upload" for="reference-photo">Reference object photo (optional)
         <input id="reference-photo" type="file" accept="image/jpeg,image/png,image/webp,image/heic" />
         <div class="camera-actions"><button id="reference-camera" class="secondary" type="button">Open camera</button><button id="reference-capture" type="button" hidden>Take reference photo</button></div>
-        <video id="reference-video" autoplay playsinline></video>
+        <video id="reference-video" autoplay playsinline muted></video>
       </label>
       <label for="reference-name">Object name<input id="reference-name" placeholder="e.g. credit card, fork, coin" required /></label>
       <div class="grid">
@@ -62,12 +62,12 @@
       <button id="forget-reference" class="secondary" type="button" hidden>Forget saved reference</button>
     </form>
     <form id="food-form">
-      <p class="eyebrow">Step 2 · Scan your food</p>
+      <p class="eyebrow">Scan your food</p>
       <label class="upload" for="photo">Open camera or choose a food photo
-        <span class="hint">Place your trained object beside the food so AI can identify it and use it as the scale.</span>
+        <span class="hint">For a more proportion-aware estimate, place your saved reference object beside the food. This is optional.</span>
         <input id="photo" type="file" accept="image/jpeg,image/png,image/webp,image/heic" />
         <div class="camera-actions"><button id="food-camera" class="secondary" type="button">Open camera</button><button id="food-capture" type="button" hidden>Take food photo</button></div>
-        <video id="food-video" autoplay playsinline></video>
+        <video id="food-video" autoplay playsinline muted></video>
         <img id="preview" alt="Selected food preview" />
       </label>
       <label for="brand">Brand (optional)<span class="hint">Helpful for packaged food, otherwise leave blank.</span><input id="brand" maxlength="100" placeholder="e.g. Greek yogurt" /></label>
@@ -103,41 +103,125 @@
       reader.onerror = reject;
       reader.readAsDataURL(file);
     });
+    const cameraErrorMessage = (error) => {
+      if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
+        return 'Camera access was blocked. Allow camera permission for this site in your browser settings, then try again.';
+      }
+      if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+        return 'No camera was found. Connect or enable a camera, or choose a photo file instead.';
+      }
+      if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+        return 'The camera is busy or unavailable. Close other apps using it and try again.';
+      }
+      if (error.name === 'OverconstrainedError' || error.name === 'ConstraintNotSatisfiedError') {
+        return 'No camera supports the requested settings. Choose a photo file instead.';
+      }
+      if (error.name === 'AbortError') {
+        return 'The camera could not start. Try again or choose a photo file instead.';
+      }
+      return error.message || 'Could not open the camera. Choose a photo file instead.';
+    };
+    const stopCamera = (video, stream) => {
+      if (stream) stream.getTracks().forEach((track) => track.stop());
+      video.srcObject = null;
+      video.style.display = 'none';
+    };
     const openCamera = async (video, capture, currentStream) => {
       if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error('Camera access is not supported here. Choose a photo file instead.');
+        throw new Error('Camera access requires a supported browser on HTTPS or localhost. Choose a photo file instead.');
       }
-      if (currentStream) currentStream.getTracks().forEach((track) => track.stop());
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
-      video.srcObject = stream;
-      video.style.display = 'block';
-      capture.hidden = false;
-      return stream;
+      if (!window.isSecureContext) {
+        throw new Error('Camera access requires HTTPS or localhost. Open the site securely or choose a photo file instead.');
+      }
+      stopCamera(video, currentStream);
+      let stream;
+      try {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: 'environment' } },
+            audio: false,
+          });
+        } catch (error) {
+          if (!['NotFoundError', 'DevicesNotFoundError', 'OverconstrainedError', 'ConstraintNotSatisfiedError'].includes(error.name)) {
+            throw error;
+          }
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+        video.srcObject = stream;
+        video.muted = true;
+        await video.play();
+        video.style.display = 'block';
+        capture.hidden = false;
+        return stream;
+      } catch (error) {
+        stopCamera(video, stream);
+        throw new Error(cameraErrorMessage(error));
+      }
     };
-    const captureCameraImage = (video, stream, input) => {
+    const captureCameraImage = (video, capture, stream, input) => {
+      if (!stream?.active || !video.videoWidth || !video.videoHeight) {
+        throw new Error('The camera is not ready yet. Open it and wait for the preview before taking a photo.');
+      }
       const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-      canvas.getContext('2d').drawImage(video, 0, 0);
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Could not capture the camera image. Choose a photo file instead.');
+      context.drawImage(video, 0, 0);
       stream.getTracks().forEach((track) => track.stop());
       video.srcObject = null;
       video.style.display = 'none';
+      capture.hidden = true;
+      input.value = '';
       input._cameraImage = { data: canvas.toDataURL('image/jpeg', .9).split(',')[1], mimeType: 'image/jpeg' };
     };
     referenceCamera.addEventListener('click', async () => {
-      try { referenceStream = await openCamera(referenceVideo, referenceCapture, referenceStream); } catch (error) { trained.textContent = error.message; }
+      try {
+        referenceStream = await openCamera(referenceVideo, referenceCapture, referenceStream);
+      } catch (error) {
+        referenceStream = null;
+        trained.textContent = error.message;
+      }
     });
-    referenceCapture.addEventListener('click', () => captureCameraImage(referenceVideo, referenceStream, referencePhoto));
+    referenceCapture.addEventListener('click', () => {
+      try {
+        captureCameraImage(referenceVideo, referenceCapture, referenceStream, referencePhoto);
+        referenceStream = null;
+        trained.textContent = 'Reference photo captured.';
+      } catch (error) {
+        trained.textContent = error.message;
+      }
+    });
     foodCamera.addEventListener('click', async () => {
-      try { foodStream = await openCamera(foodVideo, foodCapture, foodStream); } catch (error) { result.className = 'state-error'; result.textContent = error.message; }
+      try {
+        foodStream = await openCamera(foodVideo, foodCapture, foodStream);
+      } catch (error) {
+        foodStream = null;
+        result.className = 'state-error';
+        result.textContent = error.message;
+      }
     });
-    foodCapture.addEventListener('click', () => captureCameraImage(foodVideo, foodStream, photo));
+    foodCapture.addEventListener('click', () => {
+      try {
+        captureCameraImage(foodVideo, foodCapture, foodStream, photo);
+        foodStream = null;
+        result.className = 'state-empty';
+        result.textContent = 'Food photo captured. Estimate calories when ready.';
+      } catch (error) {
+        result.className = 'state-error';
+        result.textContent = error.message;
+      }
+    });
+    window.addEventListener('pagehide', () => {
+      stopCamera(referenceVideo, referenceStream);
+      stopCamera(foodVideo, foodStream);
+    });
     let savedReference = JSON.parse(localStorage.getItem('platewise-reference') || 'null');
     if (savedReference) {
       referenceName.value = savedReference.name;
       referenceLength.value = savedReference.lengthCm;
       referenceWidth.value = savedReference.widthCm;
-      trained.textContent = `Trained object: ${savedReference.name} (${savedReference.lengthCm} × ${savedReference.widthCm} cm)`;
+      trained.textContent = `Optional scale reference saved: ${savedReference.name} (${savedReference.lengthCm} × ${savedReference.widthCm} cm)`;
       forgetReference.hidden = false;
     }
     forgetReference.addEventListener('click', () => {
@@ -166,7 +250,7 @@
       train.disabled = true;
       try {
         const photoData = referencePhoto._cameraImage || (referencePhoto.files[0] ? await readImage(referencePhoto.files[0]) : savedReference?.image && { data: savedReference.image, mimeType: savedReference.mimeType });
-        if (!photoData) throw new Error('Take a reference-object photo before saving.');
+        if (!photoData) throw new Error('Choose or capture a reference photo before saving it.');
         const res = await fetch('/train-reference', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -184,7 +268,7 @@
         data.profile.mimeType = photoData.mimeType;
         localStorage.setItem('platewise-reference', JSON.stringify(data.profile));
         savedReference = data.profile;
-        trained.textContent = `Trained object: ${data.profile.name} (${data.profile.lengthCm} × ${data.profile.widthCm} cm)`;
+        trained.textContent = `Optional scale reference saved: ${data.profile.name} (${data.profile.lengthCm} × ${data.profile.widthCm} cm)`;
         forgetReference.hidden = false;
       } catch (error) {
         trained.textContent = error.message;
@@ -198,20 +282,35 @@
       const cameraImage = photo._cameraImage;
       if (!file && !cameraImage) return;
       const reference = JSON.parse(localStorage.getItem('platewise-reference') || 'null');
-      if (!reference) {
-        result.className = 'state-error';
-        result.textContent = 'Train a reference object before scanning food.';
-        return;
-      }
+      const hasReference = Boolean(
+        reference?.image &&
+        reference?.mimeType &&
+        typeof reference?.name === 'string' &&
+        Number(reference?.lengthCm) > 0 &&
+        Number(reference?.widthCm) > 0,
+      );
       submit.disabled = true;
       result.className = '';
       result.textContent = 'Analyzing your plate…';
       try {
         const imageData = cameraImage || await readImage(file);
+        const request = {
+          image: imageData.data,
+          mimeType: imageData.mimeType,
+          brand: document.getElementById('brand').value.trim(),
+        };
+        if (hasReference) {
+          Object.assign(request, {
+            referenceImage: reference.image,
+            referenceMimeType: reference.mimeType,
+            referenceName: reference.name,
+            reference: { lengthCm: reference.lengthCm, widthCm: reference.widthCm },
+          });
+        }
         const res = await fetch('/analyze-food', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: imageData.data, mimeType: imageData.mimeType, referenceImage: reference.image, referenceMimeType: reference.mimeType, referenceName: reference.name, reference: { lengthCm: reference.lengthCm, widthCm: reference.widthCm }, brand: document.getElementById('brand').value.trim() }),
+          body: JSON.stringify(request),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -229,14 +328,15 @@
         const meta = document.createElement('p');
         meta.className = 'meta';
         meta.textContent = `${item.portion} · ${item.confidence} confidence · Gemini vision estimate`;
-        if (item.referenceDetected === false) {
-          result.className = 'state-error';
-          result.textContent = `I could not find the trained ${reference.name} in this photo. Place it beside the food and try again.`;
-          return;
-        }
         const note = document.createElement('p');
         note.className = 'note';
-        note.textContent = item.notes;
+        const scaleNote = !hasReference
+          ? 'No scale reference was provided, so the portion and calorie estimate may be less precise.'
+          : item.referenceDetected === false
+            ? `The ${reference.name} scale reference was not detected, so this estimate may be less precise.`
+            : '';
+        const notesAlreadyMentionScale = /less precise|without (a )?(known-size|scale reference)/i.test(item.notes);
+        note.textContent = [item.notes, notesAlreadyMentionScale ? '' : scaleNote].filter(Boolean).join(' ');
         result.append(calories, food, meta, note);
       } catch (error) {
         result.className = 'state-error';

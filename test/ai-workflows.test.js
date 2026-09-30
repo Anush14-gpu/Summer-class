@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { cosineSimilarity, embedText } from '../lib/embeddings.js';
+import { analyzeFoodWithAi } from '../lib/food-analysis.js';
 import { extractImageInformation } from '../lib/image-extraction.js';
 import {
   FALLBACK_GENERATION_MODEL,
@@ -52,6 +53,69 @@ test('image extraction requests and validates structured Gemini output', async (
     summary: 'Lunch menu',
     key_points: ['Soup'],
   });
+});
+
+test('food analysis works without a scale reference', async () => {
+  let request;
+  const ai = {
+    models: {
+      generateContent: async (input) => {
+        request = input;
+        return {
+          text: JSON.stringify({
+            food: 'Soup',
+            portion: 'One bowl',
+            calories: 220,
+            confidence: 'low',
+            notes: 'Estimate from the visible serving.',
+          }),
+        };
+      },
+    },
+  };
+  const analysis = await analyzeFoodWithAi(ai, {
+    image: 'Zm9vZA==',
+    mimeType: 'image/jpeg',
+    brand: '',
+  });
+  assert.equal(analysis.food, 'Soup');
+  assert.equal(request.contents[0].parts.filter((part) => part.inlineData).length, 1);
+  assert.match(request.contents[0].parts.at(-1).text, /No scale-reference object was provided/);
+  assert.equal(request.config.responseJsonSchema.required.includes('referenceDetected'), false);
+});
+
+test('food analysis uses an optional scale reference when supplied', async () => {
+  let request;
+  const ai = {
+    models: {
+      generateContent: async (input) => {
+        request = input;
+        return {
+          text: JSON.stringify({
+            food: 'Rice',
+            portion: 'One cup',
+            calories: 200,
+            confidence: 'medium',
+            notes: 'Approximate estimate.',
+            referenceDetected: true,
+          }),
+        };
+      },
+    },
+  };
+  const analysis = await analyzeFoodWithAi(ai, {
+    image: 'Zm9vZA==',
+    mimeType: 'image/jpeg',
+    referenceImage: 'c2NhbGU=',
+    referenceMimeType: 'image/png',
+    referenceName: 'spoon',
+    reference: { lengthCm: 16, widthCm: 4 },
+    brand: '',
+  });
+  assert.equal(analysis.referenceDetected, true);
+  assert.equal(request.contents[0].parts.filter((part) => part.inlineData).length, 2);
+  assert.match(request.contents[0].parts.at(-1).text, /use it to improve portion-size estimates/);
+  assert.equal(request.config.responseJsonSchema.required.includes('referenceDetected'), true);
 });
 
 test('parseJsonResponse accepts fenced JSON and reports malformed output', () => {
